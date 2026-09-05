@@ -98,7 +98,7 @@ class Agent:
         else:
             result = await tool_obj.ainvoke(arguments)
 
-            if any(keyword in result.lower() for keyword in ["error", "exception", "failed", "出错", "失败", "超时", "解析失败", "不存在"]):
+            if result.startswith("[TOOL_ERROR]"):
                 self._record_failure(tool_name)
             else:
                 self._failure_count[tool_name] = 0  # 成功调用，重置计数器

@@ -114,7 +114,7 @@ class Tool:
         if isinstance(arguments, str):
             parsed = parse_json_robust(arguments)
             if parsed is None:
-                return f"参数解析失败，无法解析 JSON: {arguments[:100]}"
+                return f"[TOOL_ERROR] 参数解析失败，无法解析 JSON: {arguments[:100]}"
             arguments = parsed
 
 
@@ -125,9 +125,9 @@ class Tool:
                 timeout=30,
             )
         except asyncio.TimeoutError:
-            return "工具调用超时"
+            return "[TOOL_ERROR] 工具调用超时"
         except Exception as e:
-            return f"工具执行出错: {type(e).__name__}: {e}"
+            return f"[TOOL_ERROR] 工具执行出错: {type(e).__name__}: {e}"
 
         # 3. 结果转字符串（LLM 只理解字符串）
         if not isinstance(result, str):
