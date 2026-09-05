@@ -1,5 +1,5 @@
 [project]
-name = "co11ap5e-agent"
+name = "react-agent"
 version = "0.1.0"
 description = "A lightweight ReAct agent framework without LangChain dependency."
 readme = "README.md"
@@ -20,6 +20,9 @@ dependencies = [
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
 default = true
+
+[tool.uv.build-backend]
+packages = ["react_agent"]
 
 [build-system]
 requires = ["uv_build>=0.12.9,<0.13.0"]

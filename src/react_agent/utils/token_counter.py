@@ -1,8 +1,3 @@
-"""
-Token 计数工具。
-
-优先用 tiktoken 精确计数，不支持的模型回退到估算。
-"""
 import re
 
 try:
@@ -11,9 +6,8 @@ try:
 except ImportError:
     _HAS_TIKTOKEN = False
 
-
 def count_tokens(text: str, model: str = "gpt-3.5-turbo") -> int:
-    """优先用 tiktoken 精确计数，不支持的模型回退到估算。"""
+    # 计算文本的 token 数量，使用 tiktoken 库
     if not text:
         return 0
 
@@ -22,48 +16,40 @@ def count_tokens(text: str, model: str = "gpt-3.5-turbo") -> int:
             enc = tiktoken.encoding_for_model(model)
             return len(enc.encode(text))
         except Exception:
+            # 模型不认识（比如 deepseek-chat），回退到估算
             pass
 
+    # 回退：估算
     return estimate_tokens(text)
 
-
 def estimate_tokens(text: str) -> int:
-    """估算 token 数（不依赖 tiktoken）。
-
-    规则：
-    - 中文字符：1 字 ≈ 1.5 token
-    - 英文单词：1 词 ≈ 1.3 token
-    - 数字/标点/其他：1 个 ≈ 1 token
-    """
+    # 估算文本的 token 数量
     if not text:
         return 0
-
-    # 中文字符
+    # 计算中文字符和英文单词的数量
     chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
-
-    # 英文单词
     english_words = len(re.findall(r'[a-zA-Z]+', text))
-    english_letters = sum(len(w) for w in re.findall(r'[a-zA-Z]+', text))
 
-    # 其他字符
+    # 计算英文单词的长度总和
+    english_letters = sum(len(w) for w in re.findall(r'[a-zA-Z]+', text))
     other_chars = len(text) - chinese_chars - english_letters
 
+    # 加权求和
     total = int(chinese_chars * 1.5 + english_words * 1.3 + other_chars * 1)
     return max(1, total)
 
-
 def count_messages_tokens(messages: list[dict], model: str = "gpt-3.5-turbo") -> int:
-    """计算一组消息的总 token 数。"""
-    total = 0
-    for msg in messages:
-        total += count_tokens(msg.get("content", ""), model)
+    # 计算消息列表的总 token 数量
+    total_tokens = 0
+    for message in messages:
+        # 计算每条消息的 content 字段的 token 数量
+        total_tokens += count_tokens(message.get("content", ""), model)
+        # 计算每条消息的 tool_calls 字段的 token 数量（兼容嵌套格式）
+        if "tool_calls" in message and message["tool_calls"]:
+            for tool_call in message["tool_calls"]:
+                arguments = tool_call.get("arguments", "")
+                if not arguments and "function" in tool_call:
+                    arguments = tool_call["function"].get("arguments", "")
+                total_tokens += count_tokens(arguments, model)
 
-        # tool_calls 里的 JSON 参数也要算（兼容嵌套 function.arguments 和拍平 arguments）
-        if "tool_calls" in msg and msg["tool_calls"]:
-            for tc in msg["tool_calls"]:
-                arguments = tc.get("arguments", "")
-                if not arguments and "function" in tc:
-                    arguments = tc["function"].get("arguments", "")
-                total += count_tokens(arguments, model)
-
-    return total
+    return total_tokens

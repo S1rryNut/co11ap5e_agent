@@ -1,11 +1,4 @@
-"""
-任务规划器。
-
-把复杂任务拆成有序的子任务列表，再逐个执行。
-Plan-and-Execute 模式的核心组件。
-"""
 from react_agent.llm import LLMClient
-
 
 PLAN_PROMPT = """你是任务规划器。把用户的复杂任务拆成有序的子任务列表。
 
@@ -22,28 +15,29 @@ PLAN_PROMPT = """你是任务规划器。把用户的复杂任务拆成有序的
 用户任务：{task}
 """
 
-
 class Planner:
-    """任务规划器：把复杂任务拆成子任务列表。"""
-
-    def __init__(self, llm: LLMClient):
+    def __init__(self,llm: LLMClient):
         self.llm = llm
-
     async def aplan(self, task: str) -> list[str]:
-        """异步规划，返回子任务列表。"""
+        # 1. 组装消息
         prompt = PLAN_PROMPT.format(task=task)
+
+        # 2. 调用 LLM
         response = await self.llm.achat([{"role": "user", "content": prompt}])
 
+        # 3. 解析 JSON
         from react_agent.utils.json_parser import parse_json_robust
         result = parse_json_robust(response["content"])
 
+        # 4. 返回结果
         if isinstance(result, list):
             return [str(item) for item in result]
 
-        # 解析失败，退化：把整个任务当一个子任务
+        # 如果解析失败，返回原始任务作为唯一子任务
         return [task]
 
     def plan(self, task: str) -> list[str]:
-        """同步包装。"""
+        # 同步接口，内部使用 asyncio.run 调用异步方法
         import asyncio
         return asyncio.run(self.aplan(task))
+    
