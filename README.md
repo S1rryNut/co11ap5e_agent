@@ -166,7 +166,3 @@ Agent/
 | OpenAI | （默认） | `gpt-4o` |
 
 只要兼容 OpenAI API 格式的服务都能用。
-
-## License
-
-MIT
