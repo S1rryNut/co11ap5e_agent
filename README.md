@@ -7,7 +7,10 @@
 - **零框架依赖**：只依赖 openai / pydantic / httpx，不引入 LangChain 等重型框架
 - **ReAct 核心循环**：思考 → 调工具 → 看结果 → 再思考，直到完成
 - **自动工具 Schema**：`@tool` 装饰器从函数签名自动生成 OpenAI Function Calling JSON Schema
-- **分层记忆系统**：原始消息 + 摘要 + 结构化记忆（facts/preferences/decisions/open_questions），动态阈值自动压缩
+- **三层记忆体系**：
+  - **短期记忆**：原始消息 + 摘要 + 结构化记忆，动态阈值自动压缩
+  - **工作记忆**：当前任务 scratchpad（目标/子任务/中间结果/约束），随任务清空
+  - **长期记忆**：JSON 文件持久化，跨会话保留用户画像/对话摘要/知识，支持关键词检索
 - **容错 JSON 解析**：处理 LLM 输出的不规范 JSON（代码块、注释、尾随逗号、单引号）
 - **Plan-and-Execute**：内置规划器，复杂任务先拆解再执行
 - **生产级错误处理**：工具超时、连续失败、最大迭代次数保护
@@ -95,7 +98,9 @@ react_agent/
 ├── errors.py         # 自定义异常
 ├── memory/
 │   ├── base.py       # 记忆抽象基类
-│   └── short_term.py # 分层记忆（原始消息+摘要+结构化记忆，自动压缩）
+│   ├── short_term.py # 短期记忆（原始消息+摘要+结构化记忆，自动压缩）
+│   ├── working.py    # 工作记忆（当前任务 scratchpad：目标/子任务/中间结果/约束）
+│   └── long_term.py  # 长期记忆（JSON 持久化，跨会话，关键词检索）
 └── utils/
     ├── token_counter.py  # Token 计数
     └── json_parser.py    # 容错 JSON 解析
@@ -134,24 +139,47 @@ def search(query: str, max_results: int = 3) -> str:
 
 ### 记忆系统
 
-`ShortTermMemory`：三层分层记忆，自动压缩
+三层记忆协同工作：
 
-- **原始消息**：最近 3 轮保留原文
-- **摘要记忆**：更早的对话经 LLM 摘要，渐进式追加
-- **结构化记忆**：facts / preferences / decisions / open_questions 四字段，注入 system prompt
-- **动态压缩**：token 达上限 70% 时触发，压缩到 35%，按轮次截断不丢 tool 消息
+```
+用户输入
+  → 长期记忆检索相关内容 + 工作记忆上下文 → 注入 system prompt
+  → 短期记忆维护对话历史（自动压缩）
+  → 工具结果 → 记录到工作记忆
+  → 任务完成 → 摘要写入长期记忆并持久化
+```
+
+**短期记忆 `ShortTermMemory`**：三层分层，自动压缩
+- 原始消息：最近 3 轮保留原文
+- 摘要记忆：更早的对话经 LLM 摘要，渐进式追加
+- 结构化记忆：facts / preferences / decisions / open_questions
+- 动态压缩：token 达上限 70% 时触发，压缩到 35%
+
+**工作记忆 `WorkingMemory`**：当前任务的 scratchpad
+- 任务目标、子任务进度（待办/进行中/已完成）
+- 工具调用中间结果（自动记录，保留最近 5 条）
+- 约束与注意事项（自动去重）
+- 任务完成后清空
+
+**长期记忆 `LongTermMemory`**：跨会话持久化
+- JSON 文件存储，启动时自动加载
+- 用户画像（偏好/事实/习惯）、对话摘要、重要决定、知识条目
+- 关键词检索（按匹配度排序），自动注入相关历史到 system prompt
+- 损坏文件容错
 
 ```python
-from react_agent.memory.short_term import ShortTermMemory
+from react_agent.memory import ShortTermMemory, WorkingMemory, LongTermMemory
 
-memory = ShortTermMemory(
-    max_tokens=8000,        # 模型上下文上限
-    compress_threshold=0.7, # 70% 时触发压缩
-    keep_recent_rounds=3,   # 保留最近 3 轮原文
-    system_prompt="...",
+agent = Agent(
+    llm=llm,
+    tools=tools,
+    memory=ShortTermMemory(max_tokens=8000, system_prompt="..."),
+    working_memory=WorkingMemory(),
+    long_term_memory=LongTermMemory(storage_path="my_memory.json"),
 )
-agent = Agent(llm=llm, tools=tools, memory=memory)
 ```
+
+不传 `working_memory` / `long_term_memory` 时退化为纯短期记忆，完全向后兼容。
 
 ## 开发
 
