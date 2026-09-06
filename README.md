@@ -90,13 +90,12 @@ asyncio.run(main())
 react_agent/
 ├── llm.py            # LLM 客户端封装（统一调用格式 + 重试 + 流式）
 ├── tool.py           # 工具系统（@tool 装饰器 + 自动 Schema 生成 + 注册表）
-├── agent.py          # ReAct 核心循环
+├── agent.py          # ReAct 核心循环（含记忆自动压缩）
 ├── planner.py        # 任务规划器（Plan-and-Execute）
 ├── errors.py         # 自定义异常
 ├── memory/
 │   ├── base.py       # 记忆抽象基类
-│   ├── short_term.py # 滑动窗口记忆
-│   └── summary.py    # 摘要压缩记忆
+│   └── short_term.py # 分层记忆（原始消息+摘要+结构化记忆，自动压缩）
 └── utils/
     ├── token_counter.py  # Token 计数
     └── json_parser.py    # 容错 JSON 解析
@@ -136,10 +135,23 @@ def search(query: str, max_results: int = 3) -> str:
 ### 记忆系统
 
 `ShortTermMemory`：三层分层记忆，自动压缩
+
 - **原始消息**：最近 3 轮保留原文
 - **摘要记忆**：更早的对话经 LLM 摘要，渐进式追加
 - **结构化记忆**：facts / preferences / decisions / open_questions 四字段，注入 system prompt
 - **动态压缩**：token 达上限 70% 时触发，压缩到 35%，按轮次截断不丢 tool 消息
+
+```python
+from react_agent.memory.short_term import ShortTermMemory
+
+memory = ShortTermMemory(
+    max_tokens=8000,        # 模型上下文上限
+    compress_threshold=0.7, # 70% 时触发压缩
+    keep_recent_rounds=3,   # 保留最近 3 轮原文
+    system_prompt="...",
+)
+agent = Agent(llm=llm, tools=tools, memory=memory)
+```
 
 ## 开发
 
