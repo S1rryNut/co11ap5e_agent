@@ -7,7 +7,7 @@
 - **零框架依赖**：只依赖 openai / pydantic / httpx，不引入 LangChain 等重型框架
 - **ReAct 核心循环**：思考 → 调工具 → 看结果 → 再思考，直到完成
 - **自动工具 Schema**：`@tool` 装饰器从函数签名自动生成 OpenAI Function Calling JSON Schema
-- **多种记忆策略**：滑动窗口（ShortTermMemory）、摘要压缩（SummaryMemory）
+- **分层记忆系统**：原始消息 + 摘要 + 结构化记忆（facts/preferences/decisions/open_questions），动态阈值自动压缩
 - **容错 JSON 解析**：处理 LLM 输出的不规范 JSON（代码块、注释、尾随逗号、单引号）
 - **Plan-and-Execute**：内置规划器，复杂任务先拆解再执行
 - **生产级错误处理**：工具超时、连续失败、最大迭代次数保护
@@ -135,8 +135,11 @@ def search(query: str, max_results: int = 3) -> str:
 
 ### 记忆系统
 
-- `ShortTermMemory`：滑动窗口，保留最近的消息，总 token 不超过上限
-- `SummaryMemory`：超过阈值时把旧消息压缩成摘要，保留关键信息
+`ShortTermMemory`：三层分层记忆，自动压缩
+- **原始消息**：最近 3 轮保留原文
+- **摘要记忆**：更早的对话经 LLM 摘要，渐进式追加
+- **结构化记忆**：facts / preferences / decisions / open_questions 四字段，注入 system prompt
+- **动态压缩**：token 达上限 70% 时触发，压缩到 35%，按轮次截断不丢 tool 消息
 
 ## 开发
 

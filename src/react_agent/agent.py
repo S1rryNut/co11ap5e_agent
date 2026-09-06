@@ -4,10 +4,32 @@ from react_agent.llm import LLMClient
 from react_agent.tool import Tool, ToolRegistry
 from react_agent.memory.base import BaseMemory
 from react_agent.memory.short_term import ShortTermMemory
+from react_agent.utils.json_parser import parse_json_robust
 from react_agent.errors import (
     MaxIterationsError,
     ConsecutiveFailureError,
 )
+
+# 摘要用的 system prompt
+SUMMARY_SYSTEM_PROMPT = """你是一个对话摘要器。请把用户提供的对话压缩成结构化摘要。
+
+严格按以下 JSON 格式输出，不要输出其他内容：
+{
+  "summary": "对话过程的简要摘要（200字以内）",
+  "facts": ["已确认的事实1", "已确认的事实2"],
+  "preferences": ["用户明确说过的偏好1", "用户明确说过的偏好2"],
+  "decisions": ["已经做出的决定1", "已经做出的决定2"],
+  "open_questions": ["尚未解决的问题1", "尚未解决的问题2"]
+}
+
+规则：
+1. 只保留原文明确出现的信息，不要推测、不要补充
+2. 没有的字段填空数组 []
+3. facts 是客观事实（如"用户在用 DeepSeek API"），不是观点
+4. preferences 是用户明确表达的喜好（如"用户要求代码自己写"）
+5. decisions 是已经做出的选择（如"选择了 Qdrant 作为向量库"）
+6. open_questions 是还没解决的问题
+7. summary 写对话过程，不要重复 facts 里的内容"""
 
 
 class Agent:
@@ -44,6 +66,10 @@ class Agent:
             # 回调
             if "on_iteration_start" in self.callback:
                 self.callback["on_iteration_start"](iteration)
+
+            # 2.0 检查是否需要压缩记忆
+            if isinstance(self.memory, ShortTermMemory) and self.memory.should_compress():
+                await self._compress_memory()
 
             # 2.1 获取记忆中的消息
             messages = self.memory.get_messages()
@@ -122,6 +148,59 @@ class Agent:
 
         if self._failure_count[tool_name] >= 3:
             raise ConsecutiveFailureError(f"工具 '{tool_name}' 连续调用失败 {self._failure_count[tool_name]} 次。")
+
+    async def _compress_memory(self):
+        """压缩记忆：把旧消息摘要成结构化记忆。
+
+        流程：
+        1. 获取需要被压缩的旧消息
+        2. 调用 LLM 生成结构化摘要
+        3. 解析 JSON，应用压缩
+        """
+        old_messages = self.memory.get_messages_to_compress()
+        if not old_messages:
+            return
+
+        if self.verbose:
+            print(f"[记忆压缩] 压缩 {len(old_messages)} 条旧消息...")
+
+        # 构建摘要请求（不带 tools，纯文本任务）
+        summary_messages = [
+            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+            *old_messages,
+            {"role": "user", "content": "请总结以上对话，按要求的 JSON 格式输出。"},
+        ]
+
+        try:
+            response = await self.llm.achat(summary_messages, temperature=0.3)
+            parsed = parse_json_robust(response["content"])
+
+            if parsed and isinstance(parsed, dict):
+                self.memory.apply_compression(
+                    old_messages=old_messages,
+                    summary=parsed.get("summary", ""),
+                    structured_updates={
+                        "facts": parsed.get("facts", []),
+                        "preferences": parsed.get("preferences", []),
+                        "decisions": parsed.get("decisions", []),
+                        "open_questions": parsed.get("open_questions", []),
+                    },
+                )
+                if self.verbose:
+                    stats = self.memory.get_stats()
+                    print(f"[记忆压缩] 完成，当前 token: {stats['current_tokens']}/{stats['max_tokens']}")
+            else:
+                # JSON 解析失败，退化为纯文本摘要
+                self.memory.apply_compression(
+                    old_messages=old_messages,
+                    summary=response["content"][:500],
+                )
+                if self.verbose:
+                    print("[记忆压缩] JSON 解析失败，已保存为纯文本摘要")
+        except Exception as e:
+            # 压缩失败不影响主流程，打印日志后继续
+            if self.verbose:
+                print(f"[记忆压缩] 失败: {e}")
 
     def run(self, user_input: str) -> str:
         # 同步调用异步方法
